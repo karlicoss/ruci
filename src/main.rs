@@ -63,22 +63,20 @@ fn check_dir(path: &Path) -> Result<(), String> {
 fn main() {
     simple_logger::init().unwrap();
 
-    // TODO ok, so in one hand, we want to output stuff as soon as we process it (just cause it's nice thing to do)
-    // on the other hand, it would be nice to combine all the Results and get an exit code based on it
-    // maybe this code is just inevitably stateful.. so whatever..
-    for pp in config::TARGETS {
-        info!("Checking {:?}", pp);
-        let res = check_dir(Path::new(pp));
-        match res {
+    /*
+       eh, ok, this looks a bit meh.
+       on the one hand, we wanna output stuff ASAP during processing, just a nice thing to do
+       on the other hand, logging is not badly mutable and it's nice to implement this without explcit for loop
+    */
+    let errors: Vec<_> = config::TARGETS.iter().map(|target| {
+        info!("Checking {:?}", target);
+        let res = check_dir(Path::new(target));
+        match &res {
             Ok(_) => info!("... succcess!"),
             Err(e) => error!("{}", e),
         }
-    }
-    // TODO once we checked all, combine the Results and output?
+        res
+    }).filter(Result::is_err).collect();
 
-
-    // let mut v = vec![1, 2, 3];
-    // v.push(5);
-    // println!("{:?}", v);
-    // println!("Hello, world!");
+    exit(if errors.is_empty() {0} else {1});
 }
