@@ -1,0 +1,6 @@
+[package]
+name = "ruci"
+version = "0.1.0"
+authors = ["Dima Gerasimov <karlicoss@gmail.com>"]
+
+[dependencies]
