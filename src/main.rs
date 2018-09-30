@@ -14,14 +14,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::fs;
 
-fn get_py_module_root(p: &Path) -> PathBuf {
+type RuciError = String;
+type RuciResult = Result<(), RuciError>;
+
+fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
     fn has_init(p: &Path) -> bool {
         return p.join("__init__.py").exists();
     }
     if has_init(p) {
-        return PathBuf::from(p);
+        return Ok(PathBuf::from(p));
     }
-    let mut filtered: Vec<_> = fs::read_dir(p).unwrap().filter_map(|d| {
+    let filtered: Vec<_> = fs::read_dir(p).unwrap().filter_map(|d| {
         // TODO why as_ref here???
         let pp = d.as_ref().unwrap().path();
         if pp.is_dir() && has_init(&pp) {
@@ -30,34 +33,56 @@ fn get_py_module_root(p: &Path) -> PathBuf {
             Option::None
         }
     }).collect();
-    // let () = filtered;
     if filtered.len() != 1 {
-        panic!("{:?}", filtered);
+       return Err(format!("{:?}", filtered));
+    } else {
+        // TODO ok, it's a bit better than return Ok(filtered.remove(0)), but still ugly
+        // and I guess that better than return Ok(filtered.into_iter().next().unwrap()) as well..
+        return Ok(filtered.get(0).unwrap().clone());
     }
-    // TODO err, pretty ugly
-    return filtered.remove(0);
 }
 
-// TODO return result?
-fn check_dir(path: &Path) -> Result<(), String> {
-    if !path.is_dir() {
-        return Err(format!("Path {:?} is not a directory! ERROR!", path));
-    }
-    if !path.join(".git").exists() {
-        return Err(String::from("no .git directory... skipping"));
-    }
-    let py_module = get_py_module_root(path);
+fn is_interesting(path: &Path) -> bool {
+    return path.is_dir() && path.join(".git").exists();
+}
+
+fn check_mypy(path: &Path) -> Result<(), RuciError> {
+    let py_module = try!(get_py_module_root(path));
     // TODO how to handle io error?
-    // TODO collect all errors?
     let res = Command::new("mypy")
         .arg(py_module)
         .output()
-        .expect("failed to execute process"); // TODO is it really panic?
+        .expect("failed to execute process");
+    // TODO not really panic, might not be worth terminating everything
+
     if !res.status.success() {
         return Err(String::from_utf8(res.stdout).unwrap());
     }
-    return Ok(()); // TODO err really?
-    // println!("{:?}", );
+    return Ok(()); // TODO meh..
+}
+
+fn check_shellcheck(_path: &Path) -> Result<(), RuciError> {
+    return Err(String::from("TODO IMPLEMENT SHELLCHECK"));
+}
+
+fn check_dir(path: &Path) -> RuciResult {
+    let checks = [
+        check_mypy(path),
+        check_shellcheck(path),
+    ].to_vec();
+    // TODO err, why into_iter works for vector but not for array?
+    // ah! iter() is always borrowing?
+    let out: Vec<String> = checks.into_iter().filter_map(|thing: RuciResult| {
+        match thing {
+            Ok(_)  => Option::None,
+            Err(e) => Option::from(e),
+        }
+    }).collect();
+    if out.len() == 0 {
+        return Ok(())
+    } else {
+        return Err(out.join("\n"))
+    }
 }
 
 fn main() {
@@ -68,14 +93,20 @@ fn main() {
        on the one hand, we wanna output stuff ASAP during processing, just a nice thing to do
        on the other hand, logging is not badly mutable and it's nice to implement this without explcit for loop
     */
-    let errors: Vec<_> = config::TARGETS.iter().map(|target| {
-        info!("Checking {:?}", target);
-        let res = check_dir(Path::new(target));
-        match &res {
-            Ok(_) => info!("... succcess!"),
-            Err(e) => error!("{}", e),
-        }
-        res
+    let errors: Vec<_> = config::TARGETS.iter()
+        .filter_map(|t| {
+            let target = Path::new(t);
+            info!("checking {:?}", target);
+            if !is_interesting(target) {
+                warn!("target is not interesting... skipping!");
+                return Option::None;
+            }
+            let res = check_dir(target);
+            match &res {
+                Ok(_) => info!("... succcess!"),
+                Err(e) => error!("... error {}", e),
+            }
+            return Option::from(res);
     }).filter(Result::is_err).collect();
 
     exit(if errors.is_empty() {0} else {1});
