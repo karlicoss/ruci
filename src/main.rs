@@ -85,6 +85,46 @@ fn check_dir(path: &Path) -> RuciResult {
     }
 }
 
+extern crate walkdir;
+use walkdir::{WalkDir, IntoIter};
+
+
+struct Interesting {
+    iter: IntoIter,
+}
+
+impl Interesting {
+    fn walk(p: &Path) -> Self {
+        Self {
+            iter: WalkDir::new(p).into_iter()
+        }
+    }
+}
+
+impl Iterator for Interesting {
+    type Item = PathBuf;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let entry = match self.iter.next() {
+                None => break,
+                Some(Err(err)) => panic!("ERROR: {}", err),
+                Some(Ok(entry)) => entry,
+            };
+            if !entry.file_type().is_dir() {
+                continue
+            }
+            let ep = entry.path();
+            if is_interesting(ep) {
+                self.iter.skip_current_dir();
+                return Some(PathBuf::from(ep))
+            }
+        }
+        None
+    }
+}
+
+
 fn main() {
     simple_logger::init().unwrap();
 
@@ -94,14 +134,14 @@ fn main() {
        on the other hand, logging is not badly mutable and it's nice to implement this without explcit for loop
     */
     let errors: Vec<_> = config::TARGETS.iter()
-        .filter_map(|t| {
-            let target = Path::new(t);
+        .flat_map(|ps| Interesting::walk(Path::new(ps)))
+        .filter_map(|target| {
             info!("checking {:?}", target);
-            if !is_interesting(target) {
+            if !is_interesting(&target) {
                 warn!("target is not interesting... skipping!");
                 return Option::None;
             }
-            let res = check_dir(target);
+            let res = check_dir(&target);
             match &res {
                 Ok(_) => info!("... succcess!"),
                 Err(e) => error!("... error {}", e),
