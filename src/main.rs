@@ -9,10 +9,16 @@ it's a python prohect if:
 #[macro_use]
 extern crate log;
 extern crate simple_logger;
+extern crate clap;
+extern crate walkdir;
+
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::fs;
+
+use clap::{Arg, App};
+use walkdir::{WalkDir, IntoIter};
 
 type RuciError = String;
 type RuciResult = Result<(), RuciError>;
@@ -42,15 +48,37 @@ fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
     }
 }
 
+// TODO check my own git commits
 fn is_interesting(path: &Path) -> bool {
     return path.is_dir() && path.join(".git").exists();
 }
 
+fn get_py_targets(path: &Path) -> Vec<PathBuf> {
+    // get all .py for now, later support modules..
+    // TODO follow link??
+    let iter = WalkDir::new(path).into_iter().filter_map(
+        |me| me.ok().map(|e| e.path().to_owned()).filter(|p| p.extension().map_or(false, |ext| ext == "py")) // TODO err. filter_map for option would be nice..
+    );
+    // for x in iter {
+    //     info!("{:?}", x);
+    // }
+    // return vec![path];
+    return iter.collect();
+}
+
 fn check_mypy(path: &Path) -> Result<(), RuciError> {
-    let py_module = try!(get_py_module_root(path));
+    // if it's got a module, then check it like module? else just check all py files
+
+    // TODO check all that conform to py code??
+    // let py_module = try!(get_py_module_root(path));
+
+    // info!("py module: {:?}", py_module);
+    let targets = get_py_targets(path);
+
+    info!("mypy: {:?}: {:?}", path, targets);
     // TODO how to handle io error?
     let res = Command::new("mypy")
-        .arg(py_module)
+        .args(targets)
         .output()
         .expect("failed to execute process");
     // TODO not really panic, might not be worth terminating everything
@@ -84,10 +112,6 @@ fn check_dir(path: &Path) -> RuciResult {
         return Err(out.join("\n"))
     }
 }
-
-extern crate walkdir;
-use walkdir::{WalkDir, IntoIter};
-
 
 struct Interesting {
     iter: IntoIter,
@@ -128,12 +152,43 @@ impl Iterator for Interesting {
 fn main() {
     simple_logger::init().unwrap();
 
+    let matches = App::new("RuCi")
+                        .about("Quickchecks stuff")
+                        .arg(Arg::with_name("path")
+                            .long("path")
+                            .short("p")
+                            .index(1)
+                            .value_name("path")
+                            .takes_value(true)) // TODO multiple args
+                        // .arg(Arg::with_name("INPUT")
+                        //     .help("Sets the input file to use")
+                        //     .required(true)
+                        //     .index(1))
+                        // .arg(Arg::with_name("v")
+                        //     .short("v")
+                        //     .multiple(true)
+                        //     .help("Sets the level of verbosity"))
+                        // .subcommand(SubCommand::with_name("test")
+                        //             .about("controls testing features")
+                        //             .version("1.3")
+                        //             .author("Someone E. <someone_else@other.com>")
+                        //             .arg(Arg::with_name("debug")
+                        //                 .short("d")
+                        //                 .help("print debug information verbosely")))
+                        .get_matches();
+
+    // Gets a value for config if supplied by user, or defaults to "default.conf"
+    let path = matches.value_of("path").unwrap_or("/L/Dropbox");
+    // println!("Value for config: {}", config);
+
+    let targets = vec![path];
+
     /*
        eh, ok, this looks a bit meh.
        on the one hand, we wanna output stuff ASAP during processing, just a nice thing to do
        on the other hand, logging is not badly mutable and it's nice to implement this without explcit for loop
     */
-    let errors: Vec<_> = config::TARGETS.iter()
+    let errors: Vec<_> = targets.iter()
         .flat_map(|ps| Interesting::walk(Path::new(ps)))
         .filter_map(|target| {
             info!("checking {:?}", target);
@@ -144,7 +199,7 @@ fn main() {
             let res = check_dir(&target);
             match &res {
                 Ok(_) => info!("... succcess!"),
-                Err(e) => error!("... error {}", e),
+                Err(e) => error!("... error\n{}", e),
             }
             return Option::from(res);
     }).filter(Result::is_err).collect();
