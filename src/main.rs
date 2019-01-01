@@ -78,9 +78,11 @@ fn check_mypy(path: &Path) -> Result<(), RuciError> {
     info!("mypy: {:?}: {:?}", path, targets);
     // TODO how to handle io error?
     let res = Command::new("mypy")
+        .arg("--check-untyped-defs")
+        // TODO --strict?
         .args(targets)
         .output()
-        .expect("failed to execute process");
+        .expect("failed to execute process"); // TODO wtf??
     // TODO not really panic, might not be worth terminating everything
 
     if !res.status.success() {
@@ -178,7 +180,7 @@ fn main() {
                         .get_matches();
 
     // Gets a value for config if supplied by user, or defaults to "default.conf"
-    let path = matches.value_of("path").unwrap_or("/L/Dropbox");
+    let path = matches.value_of("path").unwrap_or(".");
     // println!("Value for config: {}", config);
 
     let targets = vec![path];
