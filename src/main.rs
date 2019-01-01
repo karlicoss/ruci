@@ -13,6 +13,8 @@ extern crate clap;
 extern crate walkdir;
 
 
+use std::os::unix::fs::PermissionsExt;
+use std::fs::Permissions;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::fs;
@@ -53,11 +55,43 @@ fn is_interesting(path: &Path) -> bool {
     return path.is_dir() && path.join(".git").exists();
 }
 
+fn is_py_file(path: &Path) -> Result<bool, RuciError> {
+    let ext = path.extension();
+    if ext.map_or(false, |ext| ext == "py") {
+        return Ok(true);
+    }
+
+    let meta = try!(fs::metadata(path).map_err(|_e| "error while retrieving permissions!"));
+    if meta.is_dir() {
+        return Ok(false);
+    }
+
+    let mode = meta.permissions().mode();
+    let exec_perms = 0o100;
+    // if it's not executable, it can't be imported anyway.. so not checking
+    if mode | exec_perms != mode {
+        return Ok(false);
+    }
+
+    let ps = try!(path.to_str().ok_or("couldn't decode the path"));
+    let res = Command::new("mimetype")
+        .arg("-b")
+        .arg("-L")
+        .arg(ps)
+        .output()
+        .map_err(|_e| "io error!"); // TODO include error
+    let out = try!(res);
+    let stdout = try!(std::str::from_utf8(&out.stdout).map_err(|_e| "io error!"));
+    let mime = stdout.replace("\n", "");
+    return Ok(mime == "text/x-python3" || mime == "text/x-python")
+}
+
 fn get_py_targets(path: &Path) -> Vec<PathBuf> {
     // get all .py for now, later support modules..
     // TODO follow link??
     let iter = WalkDir::new(path).into_iter().filter_map(
-        |me| me.ok().map(|e| e.path().to_owned()).filter(|p| p.extension().map_or(false, |ext| ext == "py")) // TODO err. filter_map for option would be nice..
+        // TODO do not swallow errors..
+        |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_py_file(p).unwrap_or(false))
     );
     // for x in iter {
     //     info!("{:?}", x);
@@ -208,3 +242,4 @@ fn main() {
 
     exit(if errors.is_empty() {0} else {1});
 }
+// TODO cache .. maybe run mypy while updating cache?
