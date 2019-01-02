@@ -18,6 +18,7 @@ use std::fs::Permissions;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::fs;
+use std::thread;
 
 use clap::{Arg, App};
 use walkdir::{WalkDir, IntoIter};
@@ -30,7 +31,7 @@ fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
         return p.join("__init__.py").exists();
     }
     if has_init(p) {
-        return Ok(PathBuf::from(p));
+        return Ok(PathBuf::from(p)); // TODO to_owned? actually should even be able to do p
     }
     let filtered: Vec<_> = fs::read_dir(p).unwrap().filter_map(|d| {
         // TODO why as_ref here???
@@ -150,14 +151,32 @@ fn check_shellcheck(_path: &Path) -> RuciResult {
 }
 
 fn check_dir(path: &Path) -> RuciResult {
-    let checks = [
-        check_mypy(path),
-        check_pylint(path),
-        check_shellcheck(path),
-    ].to_vec();
+    let pc = path.to_owned();
+    let mypy = thread::spawn(move || {
+        return check_mypy(&pc);
+    });
+
+    // TODO really, this is how it's done?..
+    let pc2 = path.to_owned();
+    let pylint = thread::spawn(move || {
+        return check_pylint(&pc2);
+    });
+
+
+    let checks = vec![
+        mypy,
+        pylint,
+    ];
+
+    let mut chresults = vec![];
+    for c in checks {
+        let res = c.join();
+        chresults.push(res.unwrap()); // TODO handle errors?
+    }
+
     // TODO err, why into_iter works for vector but not for array?
     // ah! iter() is always borrowing?
-    let out: Vec<String> = checks.into_iter().filter_map(|thing: RuciResult| {
+    let out: Vec<String> = chresults.into_iter().filter_map(|thing: RuciResult| {
         match thing {
             Ok(_)  => Option::None,
             Err(e) => Option::from(e),
@@ -264,3 +283,5 @@ fn main() {
     exit(if errors.is_empty() {0} else {1});
 }
 // TODO cache .. maybe run mypy while updating cache?
+
+// TODO maybe it could also generate json report? Then we could track when something broke.. and notify depending on importance (e.g. kython or kron are pretty important)
