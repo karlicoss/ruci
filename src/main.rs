@@ -57,7 +57,7 @@ fn is_interesting(path: &Path) -> bool {
 
 fn is_py_file(path: &Path) -> Result<bool, RuciError> {
     let ext = path.extension();
-    if ext.map_or(false, |ext| ext == "py") {
+    if ext.map_or(false, |ext| ext == "py") { // TODO hmm. mimetype can do that..
         return Ok(true);
     }
 
@@ -86,6 +86,7 @@ fn is_py_file(path: &Path) -> Result<bool, RuciError> {
     return Ok(mime == "text/x-python3" || mime == "text/x-python")
 }
 
+// TODO 1. get module(s)? then, get everything else, but don't dig into the found modules
 fn get_py_targets(path: &Path) -> Vec<PathBuf> {
     // get all .py for now, later support modules..
     // TODO follow link??
@@ -125,13 +126,33 @@ fn check_mypy(path: &Path) -> Result<(), RuciError> {
     return Ok(()); // TODO meh..
 }
 
-fn check_shellcheck(_path: &Path) -> Result<(), RuciError> {
-    return Err(String::from("TODO IMPLEMENT SHELLCHECK"));
+fn check_pylint(path: &Path) -> RuciResult {
+    let targets = get_py_targets(path);
+    info!("pylint: {:?}: {:?}", path, targets);
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let res = try!(Command::new("pylint")  // TODO maybe, python3 -m pylint?
+        .arg("-E")
+        .args(targets)
+        .output()
+        .map_err(|e| format!("error while executing pylint {:?}", e)));
+    if !res.status.success() {
+        return Err(String::from_utf8(res.stdout).unwrap());
+    }
+    return Ok(());
+}
+
+fn check_shellcheck(_path: &Path) -> RuciResult {
+    // return Err(String::from("TODO IMPLEMENT SHELLCHECK"));
+    return Ok(())
 }
 
 fn check_dir(path: &Path) -> RuciResult {
     let checks = [
         check_mypy(path),
+        check_pylint(path),
         check_shellcheck(path),
     ].to_vec();
     // TODO err, why into_iter works for vector but not for array?
