@@ -1,5 +1,3 @@
-mod config;
-
 /*
 right.. so, we need to run it against some project first
 let's start with checking if it's a python project and running mypy?
@@ -14,24 +12,23 @@ extern crate walkdir;
 
 
 use std::os::unix::fs::PermissionsExt;
-use std::fs::Permissions;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::fs;
 use std::thread;
 
 use clap::{Arg, App};
-use walkdir::{WalkDir, IntoIter};
+use walkdir::{WalkDir, IntoIter, DirEntry};
 
 type RuciError = String;
-type RuciResult = Result<(), RuciError>;
+type RuciResult<T> = Result<T, RuciError>;
 
 fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
     fn has_init(p: &Path) -> bool {
         return p.join("__init__.py").exists();
     }
     if has_init(p) {
-        return Ok(PathBuf::from(p)); // TODO to_owned? actually should even be able to do p
+        return Ok(p.to_owned());
     }
     let filtered: Vec<_> = fs::read_dir(p).unwrap().filter_map(|d| {
         // TODO why as_ref here???
@@ -51,14 +48,15 @@ fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
     }
 }
 
-// TODO check my own git commits
 fn is_interesting(path: &Path) -> bool {
-    return path.is_dir() && path.join(".git").exists();
+    return path.is_dir() && path.join(".ruci").exists();
+    // TODO check my own git commits
+    // return path.is_dir() && path.join(".git").exists();
 }
 
-fn is_py_file(path: &Path) -> Result<bool, RuciError> {
-    let ext = path.extension();
-    if ext.map_or(false, |ext| ext == "py") { // TODO hmm. mimetype can do that..
+fn is_ff(path: &Path, ext: &str, mimes: &[&str]) -> RuciResult<bool> {
+    let ex = path.extension();
+    if ex.map_or(false, |e| e == ext) { // TODO hmm. mimetype can do that..
         return Ok(true);
     }
 
@@ -84,7 +82,32 @@ fn is_py_file(path: &Path) -> Result<bool, RuciError> {
     let out = try!(res);
     let stdout = try!(std::str::from_utf8(&out.stdout).map_err(|_e| "io error!"));
     let mime = stdout.replace("\n", "");
-    return Ok(mime == "text/x-python3" || mime == "text/x-python")
+    return Ok(mimes.iter().find(|&&x| x == mime).is_some());
+}
+
+fn is_py_file(path: &Path) -> Result<bool, RuciError> {
+    return is_ff(path, "py", &["text/x-python3", "text/x-python"]);
+}
+
+fn is_sh_file(path: &Path) -> RuciResult<bool> {
+    return is_ff(path, "sh", &["application/x-shellscript"]);
+}
+
+fn is_dotgit(entry: &DirEntry) -> bool {
+    entry.file_name()
+        .to_str()
+        .map(|s| s == ".git")
+        .unwrap_or(false)
+}
+
+
+fn get_sh_targets(path: &Path) -> Vec<PathBuf> {
+    // kinda overkilly way to skip .git dir..
+    // https://github.com/BurntSushi/walkdir
+    let walker = WalkDir::new(path).into_iter();
+    return walker.filter_entry(|e| !is_dotgit(e)).filter_map(
+        |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_sh_file(p).unwrap_or(false))
+    ).collect();
 }
 
 // TODO 1. get module(s)? then, get everything else, but don't dig into the found modules
@@ -95,10 +118,6 @@ fn get_py_targets(path: &Path) -> Vec<PathBuf> {
         // TODO do not swallow errors..
         |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_py_file(p).unwrap_or(false))
     );
-    // for x in iter {
-    //     info!("{:?}", x);
-    // }
-    // return vec![path];
     return iter.collect();
 }
 
@@ -115,7 +134,7 @@ fn check_mypy(path: &Path) -> Result<(), RuciError> {
     // TODO how to handle io error?
     let res = Command::new("mypy")
         .arg("--check-untyped-defs")
-        // TODO --strict?
+        .arg("--strict-optional")
         .args(targets)
         .output()
         .expect("failed to execute process"); // TODO wtf??
@@ -127,7 +146,7 @@ fn check_mypy(path: &Path) -> Result<(), RuciError> {
     return Ok(()); // TODO meh..
 }
 
-fn check_pylint(path: &Path) -> RuciResult {
+fn check_pylint(path: &Path) -> RuciResult<()> {
     let targets = get_py_targets(path);
     info!("pylint: {:?}: {:?}", path, targets);
     if targets.is_empty() {
@@ -145,12 +164,25 @@ fn check_pylint(path: &Path) -> RuciResult {
     return Ok(());
 }
 
-fn check_shellcheck(_path: &Path) -> RuciResult {
-    // return Err(String::from("TODO IMPLEMENT SHELLCHECK"));
+fn check_shellcheck(path: &Path) -> RuciResult<()> {
+    let targets = get_sh_targets(path);
+    // TODO hmm, need to exlude .git directory?
+    info!("shellcheck: {:?}: {:?}", path, targets);
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let res = try!(Command::new("shellcheck")
+                   .args(targets)
+                   .output()
+                   .map_err(|e| format!("error while executing shellecheck {:?}", e)));
+    if !res.status.success() {
+        return Err(String::from_utf8(res.stdout).unwrap());
+    }
     return Ok(())
 }
 
-fn check_dir(path: &Path) -> RuciResult {
+fn check_dir(path: &Path) -> RuciResult<()> {
     let pc = path.to_owned();
     let mypy = thread::spawn(move || {
         return check_mypy(&pc);
@@ -162,10 +194,16 @@ fn check_dir(path: &Path) -> RuciResult {
         return check_pylint(&pc2);
     });
 
+    let sc = path.to_owned();
+    let shellcheck = thread::spawn(move || {
+        return check_shellcheck(&sc);
+    });
+
 
     let checks = vec![
         mypy,
         pylint,
+        shellcheck,
     ];
 
     let mut chresults = vec![];
@@ -176,7 +214,7 @@ fn check_dir(path: &Path) -> RuciResult {
 
     // TODO err, why into_iter works for vector but not for array?
     // ah! iter() is always borrowing?
-    let out: Vec<String> = chresults.into_iter().filter_map(|thing: RuciResult| {
+    let out: Vec<String> = chresults.into_iter().filter_map(|thing: RuciResult<()>| {
         match thing {
             Ok(_)  => Option::None,
             Err(e) => Option::from(e),
