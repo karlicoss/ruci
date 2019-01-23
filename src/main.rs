@@ -269,11 +269,13 @@ fn main() {
     let matches = App::new("RuCi")
                         .about("Quickchecks stuff")
                         .arg(Arg::with_name("path")
-                            .long("path")
-                            .short("p")
-                            .index(1)
-                            .value_name("path")
-                            .takes_value(true)) // TODO multiple args
+                            // .long("path")
+                            // .short("p")
+                            .multiple(true)
+                            // .index(1)
+                            // .value_name("path")
+                             // .takes_value(true)
+                        )
                         // .arg(Arg::with_name("INPUT")
                         //     .help("Sets the input file to use")
                         //     .required(true)
@@ -292,10 +294,10 @@ fn main() {
                         .get_matches();
 
     // Gets a value for config if supplied by user, or defaults to "default.conf"
-    let path = matches.value_of("path").unwrap_or(".");
+    let paths = matches.values_of("path"); // TODO or current dir??_or(["."]);
     // println!("Value for config: {}", config);
 
-    let targets = vec![path];
+    let targets: Vec<_> = paths.map(|ps| ps.collect()).unwrap_or(vec!["."]);
 
     /*
        eh, ok, this looks a bit meh.
