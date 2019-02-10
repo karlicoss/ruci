@@ -49,9 +49,14 @@ fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
 }
 
 fn is_interesting(path: &Path) -> bool {
-    return path.is_dir() && path.join(".ruci").exists();
-    // TODO check my own git commits
-    // return path.is_dir() && path.join(".git").exists();
+    if !path.is_dir() {
+        return false;
+    }
+    if path.join(".noruci").exists() {
+        return false;
+        // TODO check my own git commits?
+    }
+    return path.join(".git").exists() || path.join(".ruci").exists();
 }
 
 fn is_ff(path: &Path, ext: &str, mimes: &[&str]) -> RuciResult<bool> {
@@ -153,6 +158,9 @@ fn check_pylint(path: &Path) -> RuciResult<()> {
         return Ok(());
     }
 
+    // TODO ugh, pylint should run separately?
+    // otherwise we get
+    // /L/Dropbox/repos/scripts-new/wm/other-monitor: error: Duplicate module named '__main__'
     let res = try!(Command::new("pylint")  // TODO maybe, python3 -m pylint?
         .arg("-E")
         .args(targets)
@@ -276,21 +284,6 @@ fn main() {
                             // .value_name("path")
                              // .takes_value(true)
                         )
-                        // .arg(Arg::with_name("INPUT")
-                        //     .help("Sets the input file to use")
-                        //     .required(true)
-                        //     .index(1))
-                        // .arg(Arg::with_name("v")
-                        //     .short("v")
-                        //     .multiple(true)
-                        //     .help("Sets the level of verbosity"))
-                        // .subcommand(SubCommand::with_name("test")
-                        //             .about("controls testing features")
-                        //             .version("1.3")
-                        //             .author("Someone E. <someone_else@other.com>")
-                        //             .arg(Arg::with_name("debug")
-                        //                 .short("d")
-                        //                 .help("print debug information verbosely")))
                         .get_matches();
 
     // Gets a value for config if supplied by user, or defaults to "default.conf"
