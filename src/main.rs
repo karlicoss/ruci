@@ -126,7 +126,7 @@ fn get_py_targets(path: &Path) -> Vec<PathBuf> {
     return iter.collect();
 }
 
-fn check_mypy(path: &Path) -> Result<(), RuciError> {
+fn check_mypy(path: &Path) -> RuciResult<()> {
     // if it's got a module, then check it like module? else just check all py files
 
     // TODO check all that conform to py code??
@@ -135,7 +135,11 @@ fn check_mypy(path: &Path) -> Result<(), RuciError> {
     // info!("py module: {:?}", py_module);
     let targets = get_py_targets(path);
 
-    info!("mypy: {:?}: {:?}", path, targets);
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    info!("\tmypy: {:?}: {:?}", path, targets);
     // TODO how to handle io error?
     let res = Command::new("mypy")
         .arg("--check-untyped-defs")
@@ -146,14 +150,14 @@ fn check_mypy(path: &Path) -> Result<(), RuciError> {
     // TODO not really panic, might not be worth terminating everything
 
     if !res.status.success() {
-        return Err(String::from_utf8(res.stdout).unwrap());
+        return Err(format!("{}\n{}", String::from_utf8(res.stdout).unwrap(), String::from_utf8(res.stderr).unwrap()));
     }
     return Ok(()); // TODO meh..
 }
 
 fn check_pylint(path: &Path) -> RuciResult<()> {
     let targets = get_py_targets(path);
-    info!("pylint: {:?}: {:?}", path, targets);
+    info!("\tpylint: {:?}: {:?}", path, targets);
     if targets.is_empty() {
         return Ok(());
     }
@@ -175,7 +179,7 @@ fn check_pylint(path: &Path) -> RuciResult<()> {
 fn check_shellcheck(path: &Path) -> RuciResult<()> {
     let targets = get_sh_targets(path);
     // TODO hmm, need to exlude .git directory?
-    info!("shellcheck: {:?}: {:?}", path, targets);
+    info!("\tshellcheck: {:?}: {:?}", path, targets);
     if targets.is_empty() {
         return Ok(());
     }
@@ -248,13 +252,13 @@ impl Interesting {
 }
 
 impl Iterator for Interesting {
-    type Item = PathBuf;
+    type Item = RuciResult<PathBuf>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let entry = match self.iter.next() {
                 None => break,
-                Some(Err(err)) => panic!("ERROR: {}", err),
+                Some(Err(err)) => return Some(Err(err.to_string())),
                 Some(Ok(entry)) => entry,
             };
             if !entry.file_type().is_dir() {
@@ -263,7 +267,7 @@ impl Iterator for Interesting {
             let ep = entry.path();
             if is_interesting(ep) {
                 self.iter.skip_current_dir();
-                return Some(PathBuf::from(ep))
+                return Some(Ok(PathBuf::from(ep)))
             }
         }
         None
@@ -300,6 +304,10 @@ fn main() {
     let errors: Vec<_> = targets.iter()
         .flat_map(|ps| Interesting::walk(Path::new(ps)))
         .filter_map(|target| {
+            let target = match target {
+                Err(err) => return Option::from(Err(err)),
+                Ok(target) => target,
+            };
             info!("checking {:?}", target);
             if !is_interesting(&target) {
                 warn!("target is not interesting... skipping!");
@@ -307,11 +315,15 @@ fn main() {
             }
             let res = check_dir(&target);
             match &res {
-                Ok(_) => info!("... succcess!"),
-                Err(e) => error!("... error\n{}", e),
+                Ok(_) => info!("... success"),
+                Err(e) => error!("... ERROR\n{}", e),
             }
             return Option::from(res);
-    }).filter(Result::is_err).collect();
+    }).filter_map(Result::err).collect();
+
+    for e in &errors {
+        error!("error:\n\t{}", e);
+    }
 
     exit(if errors.is_empty() {0} else {1});
 }
