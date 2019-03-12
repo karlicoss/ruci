@@ -20,49 +20,79 @@ use std::thread;
 use clap::{Arg, App};
 use walkdir::{WalkDir, IntoIter, DirEntry};
 
-type RuciError = String;
-type RuciResult<T> = Result<T, RuciError>;
 
-fn get_py_module_root(p: &Path) -> Result<PathBuf, RuciError> {
-    fn has_init(p: &Path) -> bool {
-        return p.join("__init__.py").exists();
-    }
-    if has_init(p) {
-        return Ok(p.to_owned());
-    }
-    let filtered: Vec<_> = fs::read_dir(p).unwrap().filter_map(|d| {
-        // TODO why as_ref here???
-        let pp = d.as_ref().unwrap().path();
-        if pp.is_dir() && has_init(&pp) {
-            Option::from(pp)
-        } else {
-            Option::None
+type PathPredicate = Fn(&Path) -> RuciResult<bool>;
+
+// TODO eh, the lifetime is a bit awkward... is that really necessary?
+struct Interesting<'a> {
+    iter: IntoIter,
+    predicate: &'a PathPredicate,
+}
+
+struct FollowLinks {
+    value: bool,
+}
+
+impl<'a> Interesting<'a> {
+    fn walk(root: &Path, follow_links: FollowLinks, predicate: &'a PathPredicate) -> Self {
+        Self {
+            iter: WalkDir::new(root).follow_links(follow_links.value).into_iter(),
+            predicate: predicate,
         }
-    }).collect();
-    if filtered.len() != 1 {
-       return Err(format!("{:?}", filtered));
-    } else {
-        // TODO ok, it's a bit better than return Ok(filtered.remove(0)), but still ugly
-        // and I guess that better than return Ok(filtered.into_iter().next().unwrap()) as well..
-        return Ok(filtered.get(0).unwrap().clone());
     }
 }
 
-fn is_interesting(path: &Path) -> bool {
-    if !path.is_dir() {
-        return false;
+
+// original interesting: return dirs that are interesting; do not descend
+// python targets: return all items conforming to is_py_file and modules (do not descend)
+impl<'a> Iterator for Interesting<'a> {
+    type Item = RuciResult<PathBuf>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let entry = match self.iter.next() {
+                None => break,
+                Some(Err(err)) => return Some(Err(err.to_string())),
+                Some(Ok(entry)) => entry,
+            };
+            let ep = entry.path();
+            let conforms = match (self.predicate)(ep) {
+                Err(err) => return Some(Err(err)),
+                Ok(conforms) => conforms,
+            };
+            if conforms {
+                if entry.file_type().is_dir() {
+                    self.iter.skip_current_dir();
+                }
+                return Some(Ok(PathBuf::from(ep)))
+            }
+        }
+        None
+    }
+}
+
+
+
+type RuciError = String;
+type RuciResult<T> = Result<T, RuciError>;
+
+
+fn is_ruci_target(path: &Path) -> RuciResult<bool> {
+    if !path.is_dir() {// TODO FIXME do not swallow errors
+        return Ok(false);
     }
     if path.join(".noruci").exists() {
-        return false;
+        return Ok(false);
         // TODO check my own git commits?
     }
     for pp in &[".git", ".ruci", "__init__.py"] {
         if path.join(pp).exists() {
-            return true;
+            return Ok(true);
         }
     }
-    return false;
+    return Ok(false);
 }
+
 
 fn is_ff(path: &Path, ext: &str, mimes: &[&str]) -> RuciResult<bool> {
     let ex = path.extension();
@@ -70,7 +100,8 @@ fn is_ff(path: &Path, ext: &str, mimes: &[&str]) -> RuciResult<bool> {
         return Ok(true);
     }
 
-    let meta = try!(fs::metadata(path).map_err(|_e| "error while retrieving permissions!"));
+    let meta = try!(fs::metadata(path).map_err(|_e| "error while retrieving meta!"));
+
     if meta.is_dir() {
         return Ok(false);
     }
@@ -95,13 +126,32 @@ fn is_ff(path: &Path, ext: &str, mimes: &[&str]) -> RuciResult<bool> {
     return Ok(mimes.iter().find(|&&x| x == mime).is_some());
 }
 
-fn is_py_file(path: &Path) -> Result<bool, RuciError> {
+
+fn is_py_file(path: &Path) -> RuciResult<bool> {
     return is_ff(path, "py", &["text/x-python3", "text/x-python"]);
 }
+
+
+fn is_py_target(path: &Path) -> RuciResult<bool> {
+    // TODO duplicate meta retrieval...
+    let meta = try!(fs::metadata(path).map_err(|_e| "error while retrieving meta!"));
+    if meta.is_dir() {
+        // checks whether it is py module root
+        // TODO FIXME eh. the results are sometimes different if you check as module vs checking as bunch of files
+        // e.g. check on my module and my.coding
+        let maybe_meta = fs::metadata(path.join("__init__.py"));
+        let init_exists = maybe_meta.is_ok(); // TODO distinguish between errors??
+        return Ok(init_exists);
+    } else {
+        return is_py_file(path);
+    }
+}
+
 
 fn is_sh_file(path: &Path) -> RuciResult<bool> {
     return is_ff(path, "sh", &["application/x-shellscript"]);
 }
+
 
 fn is_dotgit(entry: &DirEntry) -> bool {
     entry.file_name()
@@ -120,25 +170,13 @@ fn get_sh_targets(path: &Path) -> Vec<PathBuf> {
     ).collect();
 }
 
-// TODO 1. get module(s)? then, get everything else, but don't dig into the found modules
-fn get_py_targets(path: &Path) -> Vec<PathBuf> {
-    // get all .py for now, later support modules..
-    // TODO follow link??
-    let iter = WalkDir::new(path).follow_links(true).into_iter().filter_map(
-        // TODO do not swallow errors..
-        |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_py_file(p).unwrap_or(false))
-    );
+fn get_py_targets(path: &Path) -> RuciResult<Vec<PathBuf>> {
+    let iter = Interesting::walk(path, FollowLinks{value: true}, &is_py_target).into_iter();
     return iter.collect();
 }
 
 fn check_mypy(path: &Path) -> RuciResult<()> {
-    // if it's got a module, then check it like module? else just check all py files
-
-    // TODO check all that conform to py code??
-    // let py_module = try!(get_py_module_root(path));
-
-    // info!("py module: {:?}", py_module);
-    let targets = get_py_targets(path);
+    let targets = try!(get_py_targets(path));
 
     if targets.is_empty() {
         return Ok(());
@@ -161,7 +199,7 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
 }
 
 fn check_pylint(path: &Path) -> RuciResult<()> {
-    let targets = get_py_targets(path);
+    let targets = try!(get_py_targets(path));
     info!("\tpylint: {:?}: {:?}", path, targets);
     if targets.is_empty() {
         return Ok(());
@@ -244,44 +282,9 @@ fn check_dir(path: &Path) -> RuciResult<()> {
     }
 }
 
-struct Interesting {
-    iter: IntoIter,
-}
-
-impl Interesting {
-    fn walk(p: &Path) -> Self {
-        Self {
-            iter: WalkDir::new(p).into_iter()
-        }
-    }
-}
-
-impl Iterator for Interesting {
-    type Item = RuciResult<PathBuf>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let entry = match self.iter.next() {
-                None => break,
-                Some(Err(err)) => return Some(Err(err.to_string())),
-                Some(Ok(entry)) => entry,
-            };
-            if !entry.file_type().is_dir() {
-                continue
-            }
-            let ep = entry.path();
-            if is_interesting(ep) {
-                self.iter.skip_current_dir();
-                return Some(Ok(PathBuf::from(ep)))
-            }
-        }
-        None
-    }
-}
-
 // TODO I guess we could have two modes
 // One mode is running against the whole filesystem; then we look for .ruci files? Since checking everything is pretty unrealistic
-// Another mode 
+// Another mode is running against pre
 
 fn main() {
     simple_logger::init().unwrap();
@@ -310,17 +313,13 @@ fn main() {
        on the other hand, logging is not badly mutable and it's nice to implement this without explcit for loop
     */
     let errors: Vec<_> = targets.iter()
-        .flat_map(|ps| Interesting::walk(Path::new(ps)))
+        .flat_map(|ps| Interesting::walk(&fs::canonicalize(Path::new(ps)).unwrap(), FollowLinks{value: false}, &is_ruci_target))
         .filter_map(|target| {
             let target = match target {
                 Err(err) => return Option::from(Err(err)),
                 Ok(target) => target,
             };
             info!("checking {:?}", target);
-            if !is_interesting(&target) {
-                warn!("target is not interesting... skipping!");
-                return Option::None;
-            }
             let res = check_dir(&target);
             match &res {
                 Ok(_) => info!("... success"),
