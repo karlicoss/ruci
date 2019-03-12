@@ -56,7 +56,12 @@ fn is_interesting(path: &Path) -> bool {
         return false;
         // TODO check my own git commits?
     }
-    return path.join(".git").exists() || path.join(".ruci").exists();
+    for pp in &[".git", ".ruci", "__init__.py"] {
+        if path.join(pp).exists() {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn is_ff(path: &Path, ext: &str, mimes: &[&str]) -> RuciResult<bool> {
