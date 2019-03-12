@@ -114,7 +114,7 @@ fn is_dotgit(entry: &DirEntry) -> bool {
 fn get_sh_targets(path: &Path) -> Vec<PathBuf> {
     // kinda overkilly way to skip .git dir..
     // https://github.com/BurntSushi/walkdir
-    let walker = WalkDir::new(path).into_iter();
+    let walker = WalkDir::new(path).follow_links(true).into_iter();
     return walker.filter_entry(|e| !is_dotgit(e)).filter_map(
         |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_sh_file(p).unwrap_or(false))
     ).collect();
@@ -124,7 +124,7 @@ fn get_sh_targets(path: &Path) -> Vec<PathBuf> {
 fn get_py_targets(path: &Path) -> Vec<PathBuf> {
     // get all .py for now, later support modules..
     // TODO follow link??
-    let iter = WalkDir::new(path).into_iter().filter_map(
+    let iter = WalkDir::new(path).follow_links(true).into_iter().filter_map(
         // TODO do not swallow errors..
         |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_py_file(p).unwrap_or(false))
     );
@@ -279,6 +279,9 @@ impl Iterator for Interesting {
     }
 }
 
+// TODO I guess we could have two modes
+// One mode is running against the whole filesystem; then we look for .ruci files? Since checking everything is pretty unrealistic
+// Another mode 
 
 fn main() {
     simple_logger::init().unwrap();
