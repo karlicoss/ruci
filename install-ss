@@ -1,0 +1,4 @@
+#!/bin/bash
+set -eu
+cd "$(dirname "$0")"
+cargo install -f --root /L/zzz_syncthing/soft/ruci/
