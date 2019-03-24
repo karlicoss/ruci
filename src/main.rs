@@ -187,6 +187,7 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
     let res = Command::new("mypy")
         .arg("--check-untyped-defs")
         .arg("--strict-optional")
+        .arg("--scripts-are-modules")
         .args(targets)
         .output()
         .expect("failed to execute process"); // TODO wtf??
@@ -303,15 +304,17 @@ fn main() {
 
     // Gets a value for config if supplied by user, or defaults to "default.conf"
     let paths = matches.values_of("path"); // TODO or current dir??_or(["."]);
-    // println!("Value for config: {}", config);
 
     let targets: Vec<_> = paths.map(|ps| ps.collect()).unwrap_or(vec!["."]);
+
+    // println!("{:?}", &targets);
 
     /*
        eh, ok, this looks a bit meh.
        on the one hand, we wanna output stuff ASAP during processing, just a nice thing to do
        on the other hand, logging is not badly mutable and it's nice to implement this without explcit for loop
     */
+    // TODO shit order is not deterministic because of walkdir...
     let errors: Vec<_> = targets.iter()
         .flat_map(|ps| Interesting::walk(&fs::canonicalize(Path::new(ps)).unwrap(), FollowLinks{value: false}, &is_ruci_target))
         .filter_map(|target| {
