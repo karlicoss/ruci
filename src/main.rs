@@ -184,11 +184,13 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
 
     info!("\tmypy: {:?}: {:?}", path, targets);
     // TODO how to handle io error?
-    let res = Command::new("mypy")
-        .arg("--check-untyped-defs")
+    let mut cmd = Command::new("mypy");
+    cmd.arg("--check-untyped-defs")
         .arg("--strict-optional")
-        .arg("--scripts-are-modules")
-        .args(targets)
+        // .arg("--scripts-are-modules")
+        .args(targets);
+    debug!("{:?}", cmd);
+    let res = cmd
         .output()
         .expect("failed to execute process"); // TODO wtf??
     // TODO not really panic, might not be worth terminating everything
