@@ -9,17 +9,19 @@ extern crate log;
 extern crate simple_logger;
 extern crate clap;
 extern crate walkdir;
+extern crate tempfile;
 
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::fs;
+use std::io::prelude::*;
 use std::thread;
+use tempfile::NamedTempFile;
 
 use clap::{Arg, App};
 use walkdir::{WalkDir, IntoIter, DirEntry};
-
 
 type PathPredicate = Fn(&Path) -> RuciResult<bool>;
 
@@ -177,12 +179,12 @@ fn get_py_targets(path: &Path) -> RuciResult<Vec<PathBuf>> {
 
 fn check_mypy(path: &Path) -> RuciResult<()> {
     let targets = try!(get_py_targets(path));
+    info!("\tmypy: {:?}: {:?}", path, targets);
 
     if targets.is_empty() {
         return Ok(());
     }
 
-    info!("\tmypy: {:?}: {:?}", path, targets);
     // TODO how to handle io error?
     let mut cmd = Command::new("mypy");
     cmd.arg("--check-untyped-defs")
@@ -204,6 +206,7 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
 fn check_pylint(path: &Path) -> RuciResult<()> {
     let targets = try!(get_py_targets(path));
     info!("\tpylint: {:?}: {:?}", path, targets);
+
     if targets.is_empty() {
         return Ok(());
     }
@@ -220,6 +223,36 @@ fn check_pylint(path: &Path) -> RuciResult<()> {
         return Err(String::from_utf8(res.stdout).unwrap());
     }
     return Ok(());
+}
+
+fn check_pytest(path: &Path) -> RuciResult<()> {
+    info!("\tpytest: {:?}", path);
+
+    let mut file = try!(NamedTempFile::new().map_err(|e| format!("{:?}", e)));
+    {
+        let pytest_config = b"
+[pytest]
+python_files = '*.py'
+";
+        try!(file.write_all(pytest_config).map_err(|e| format!("{:?}", e)));
+    }
+
+    let res = try!(
+        Command::new("pytest")
+            .arg("-c")
+            .arg(file.path())
+            .arg(path)
+            .output()
+            .map_err(|e| format!("error while executing pytest {:?}", e))
+    );
+    let code = res.status.code();
+    let out = String::from_utf8(res.stdout).unwrap();
+    let err = String::from_utf8(res.stderr).unwrap();
+    const NO_TESTS_COLLECTED: i32 = 5; // https://docs.pytest.org/en/latest/usage.html
+    return code
+        .ok_or(())
+        .and_then(|ecode| if ecode == 0 || ecode == NO_TESTS_COLLECTED { Ok(()) } else { Err(()) })
+        .map_err(|_| format!("pytest failed: {}\n{}", out, err));
 }
 
 fn check_shellcheck(path: &Path) -> RuciResult<()> {
@@ -240,7 +273,7 @@ fn check_shellcheck(path: &Path) -> RuciResult<()> {
     return Ok(())
 }
 
-fn check_dir(path: &Path) -> RuciResult<()> {
+fn check_dir(path: &Path, with_pytest: bool) -> RuciResult<()> {
     let pc = path.to_owned();
     let mypy = thread::spawn(move || {
         return check_mypy(&pc);
@@ -257,12 +290,23 @@ fn check_dir(path: &Path) -> RuciResult<()> {
         return check_shellcheck(&sc);
     });
 
+    let tc = path.to_owned();
+    let pytest = thread::spawn(move || {
+        return check_pytest(&tc);
+    });
 
-    let checks = vec![
-        mypy,
-        pylint,
-        shellcheck,
-    ];
+
+    let checks = {
+        let mut res = vec![
+            mypy,
+            pylint,
+            shellcheck,
+        ];
+        if with_pytest {
+            res.push(pytest);
+        }
+        res
+    };
 
     let mut chresults = vec![];
     for c in checks {
@@ -294,6 +338,7 @@ fn main() {
 
     let matches = App::new("RuCi")
                         .about("Quickchecks stuff")
+                        .arg(Arg::with_name("test").long("test"))
                         .arg(Arg::with_name("path")
                             // .long("path")
                             // .short("p")
@@ -303,6 +348,8 @@ fn main() {
                              // .takes_value(true)
                         )
                         .get_matches();
+
+    let with_pytest = matches.is_present("test");
 
     // Gets a value for config if supplied by user, or defaults to "default.conf"
     let paths = matches.values_of("path"); // TODO or current dir??_or(["."]);
@@ -325,7 +372,7 @@ fn main() {
                 Ok(target) => target,
             };
             info!("checking {:?}", target);
-            let res = check_dir(&target);
+            let res = check_dir(&target, with_pytest);
             match &res {
                 Ok(_) => info!("... success"),
                 Err(e) => error!("... ERROR\n{}", e),
@@ -334,7 +381,7 @@ fn main() {
     }).filter_map(Result::err).collect();
 
     for e in &errors {
-        error!("error:\n\t{}", e);
+        error!("ERROR:\n\t{}", e);
     }
 
     exit(if errors.is_empty() {0} else {1});
