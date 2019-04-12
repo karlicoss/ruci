@@ -272,6 +272,7 @@ python_files = '*.py'
         Command::new("pytest")
             .arg("-c")
             .arg(file.path())
+            .arg("--ignore-glob").arg("setup.py")
             .arg(path)
             .output()
             .map_err(|e| format!("error while executing pytest {:?}", e))
