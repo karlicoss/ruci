@@ -323,12 +323,6 @@ fn check_dir(path: &Path, with_pytest: bool) -> RuciResult<()> {
         return check_shellcheck(&sc);
     });
 
-    let tc = path.to_owned();
-    let pytest = thread::spawn(move || {
-        return check_pytest(&tc);
-    });
-
-
     let checks = {
         let mut res = vec![
             mypy,
@@ -336,6 +330,10 @@ fn check_dir(path: &Path, with_pytest: bool) -> RuciResult<()> {
             shellcheck,
         ];
         if with_pytest {
+            let tc = path.to_owned();
+            let pytest = thread::spawn(move || {
+                return check_pytest(&tc);
+            });
             res.push(pytest);
         }
         res
