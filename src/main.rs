@@ -253,6 +253,7 @@ python_files = '*.py'
     let code = res.status.code();
     let out = String::from_utf8(res.stdout).unwrap();
     let err = String::from_utf8(res.stderr).unwrap();
+    print!("{}", out);
     const NO_TESTS_COLLECTED: i32 = 5; // https://docs.pytest.org/en/latest/usage.html
     return code
         .ok_or(())
