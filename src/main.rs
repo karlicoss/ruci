@@ -23,7 +23,13 @@ use tempfile::NamedTempFile;
 use clap::{Arg, App};
 use walkdir::{WalkDir, IntoIter, DirEntry};
 
-type PathPredicate = Fn(&Path) -> RuciResult<bool>;
+enum Rspec {
+    Interesting,
+    Skip,
+    Descent
+}
+
+type PathPredicate = Fn(&Path) -> RuciResult<Rspec>;
 
 // TODO eh, the lifetime is a bit awkward... is that really necessary?
 struct Interesting<'a> {
@@ -44,7 +50,6 @@ impl<'a> Interesting<'a> {
     }
 }
 
-
 // original interesting: return dirs that are interesting; do not descend
 // python targets: return all items conforming to is_py_file and modules (do not descend)
 impl<'a> Iterator for Interesting<'a> {
@@ -62,15 +67,29 @@ impl<'a> Iterator for Interesting<'a> {
                 Err(err) => return Some(Err(err)),
                 Ok(conforms) => conforms,
             };
-            if conforms {
-                if entry.file_type().is_dir() {
-                    self.iter.skip_current_dir();
+            // TODO three types: Skip, Conforms, Descent?
+            match conforms {
+                Rspec::Interesting => {
+                    if entry.file_type().is_dir() {
+                        debug!("Skipping INT {:?}", entry);
+                        self.iter.skip_current_dir();
+                    }
+                    return Some(Ok(PathBuf::from(ep)))
+                },
+                Rspec::Skip => {
+                    if entry.file_type().is_dir() {
+                        debug!("Skipping SKIP {:?}", entry);
+                        self.iter.skip_current_dir();
+                    }
+                },
+                Rspec::Descent => {
+                    // TODO ??
                 }
-                return Some(Ok(PathBuf::from(ep)))
             }
         }
         None
     }
+
 }
 
 
@@ -79,25 +98,28 @@ type RuciError = String;
 type RuciResult<T> = Result<T, RuciError>;
 
 
-fn is_ruci_target(path: &Path) -> RuciResult<bool> {
+fn is_ruci_target(path: &Path) -> RuciResult<Rspec> {
     if !path.is_dir() {// TODO FIXME do not swallow errors
         let ex = path.extension();
         if ex.map_or(false, |e| e == "py") {
-            return Ok(true); // TODO eh. hacky
+            return Ok(Rspec::Interesting); // TODO eh. hacky
         } else {
-            return Ok(false);
+            return Ok(Rspec::Skip);
         }
     }
+    if path.file_stem().map_or(false, |e| e  == ".eggs") {
+        return Ok(Rspec::Skip);
+    }
     if path.join(".noruci").exists() {
-        return Ok(false);
+        return Ok(Rspec::Skip);
         // TODO check my own git commits?
     }
     for pp in &[".git", ".ruci", "__init__.py"] {
         if path.join(pp).exists() {
-            return Ok(true);
+            return Ok(Rspec::Interesting);
         }
     }
-    return Ok(false);
+    return Ok(Rspec::Descent);
 }
 
 
@@ -139,7 +161,10 @@ fn is_py_file(path: &Path) -> RuciResult<bool> {
 }
 
 
-fn is_py_target(path: &Path) -> RuciResult<bool> {
+fn is_py_target(path: &Path) -> RuciResult<Rspec> {
+    if path.file_stem().map_or(false, |e| e  == ".eggs") {
+        return Ok(Rspec::Skip);
+    }
     // TODO duplicate meta retrieval...
     let meta = try!(fs::metadata(path).map_err(|_e| "error while retrieving meta!"));
     if meta.is_dir() {
@@ -148,9 +173,9 @@ fn is_py_target(path: &Path) -> RuciResult<bool> {
         // e.g. check on my module and my.coding
         let maybe_meta = fs::metadata(path.join("__init__.py"));
         let init_exists = maybe_meta.is_ok(); // TODO distinguish between errors??
-        return Ok(init_exists);
+        return Ok(if init_exists { Rspec::Interesting } else { Rspec::Descent });
     } else {
-        return is_py_file(path);
+        return is_py_file(path).map(|b| if b { Rspec::Interesting } else { Rspec::Skip });
     }
 }
 
