@@ -217,7 +217,8 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
 
     // TODO how to handle io error?
     let mut cmd = Command::new("mypy");
-    cmd.arg("--check-untyped-defs")
+    cmd.env("MYPYPATH", "/L/misc/mypypath")
+        .arg("--check-untyped-defs")
         .arg("--strict-optional")
         // .arg("--scripts-are-modules")
         .args(targets);
