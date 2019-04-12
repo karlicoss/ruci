@@ -81,7 +81,12 @@ type RuciResult<T> = Result<T, RuciError>;
 
 fn is_ruci_target(path: &Path) -> RuciResult<bool> {
     if !path.is_dir() {// TODO FIXME do not swallow errors
-        return Ok(false);
+        let ex = path.extension();
+        if ex.map_or(false, |e| e == "py") {
+            return Ok(true); // TODO eh. hacky
+        } else {
+            return Ok(false);
+        }
     }
     if path.join(".noruci").exists() {
         return Ok(false);
