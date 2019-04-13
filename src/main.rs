@@ -268,14 +268,16 @@ python_files = '*.py'
         try!(file.write_all(pytest_config).map_err(|e| format!("{:?}", e)));
     }
 
+    let mut cmd = Command::new("pytest");
+    cmd.arg("-c")
+       .arg(file.path())
+       .arg("--ignore-glob").arg("setup.py")
+       .arg(path);
+    debug!("{:?}", cmd);
     let res = try!(
-        Command::new("pytest")
-            .arg("-c")
-            .arg(file.path())
-            .arg("--ignore-glob").arg("setup.py")
-            .arg(path)
-            .output()
-            .map_err(|e| format!("error while executing pytest {:?}", e))
+        cmd
+        .output()
+        .map_err(|e| format!("error while executing pytest {:?}", e))
     );
     let code = res.status.code();
     let out = String::from_utf8(res.stdout).unwrap();
