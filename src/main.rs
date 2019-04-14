@@ -272,7 +272,8 @@ python_files = '*.py'
     }
 
     let mut cmd = Command::new("pytest");
-    cmd.arg("-c")
+    cmd.arg("-rap")
+       .arg("-c")
        .arg(file.path())
        .arg("--ignore-glob").arg("setup.py")
        .arg(path);
