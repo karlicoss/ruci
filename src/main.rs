@@ -23,6 +23,7 @@ use tempfile::NamedTempFile;
 use clap::{Arg, App};
 use walkdir::{WalkDir, IntoIter, DirEntry};
 
+#[derive(PartialEq)]
 enum Rspec {
     Interesting,
     Skip,
@@ -162,9 +163,11 @@ fn is_py_file(path: &Path) -> RuciResult<bool> {
 
 
 fn is_py_target(path: &Path) -> RuciResult<Rspec> {
-    if path.file_stem().map_or(false, |e| e  == ".eggs") {
-        return Ok(Rspec::Skip);
+    let rc = try!(is_ruci_target(path));
+    if rc == Rspec::Skip {
+        return Ok(rc);
     }
+
     // TODO duplicate meta retrieval...
     let meta = try!(fs::metadata(path).map_err(|_e| "error while retrieving meta!"));
     if meta.is_dir() {
