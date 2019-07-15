@@ -212,9 +212,10 @@ fn get_py_targets(path: &Path) -> RuciResult<Vec<PathBuf>> {
 
 fn check_mypy(path: &Path) -> RuciResult<()> {
     let targets = try!(get_py_targets(path));
-    info!("\tmypy: {:?}: {:?}", path, targets);
+    // info!("\tmypy: {:?}: {:?}", path, targets);
 
     if targets.is_empty() {
+        info!("\tmypy: nothing to check");
         return Ok(());
     }
 
@@ -225,7 +226,7 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
         .arg("--strict-optional")
         // .arg("--scripts-are-modules")
         .args(targets);
-    debug!("{:?}", cmd);
+    info!("\t{:?}", cmd);
     let res = cmd
         .output()
         .expect("failed to execute process"); // TODO wtf??
@@ -239,18 +240,22 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
 
 fn check_pylint(path: &Path) -> RuciResult<()> {
     let targets = try!(get_py_targets(path));
-    info!("\tpylint: {:?}: {:?}", path, targets);
 
     if targets.is_empty() {
+        info!("\tpylint: nothing to check");
         return Ok(());
     }
 
     // TODO ugh, pylint should run separately?
     // otherwise we get
     // /L/Dropbox/repos/scripts-new/wm/other-monitor: error: Duplicate module named '__main__'
-    let res = try!(Command::new("pylint")  // TODO maybe, python3 -m pylint?
-        .arg("-E")
-        .args(targets)
+    let mut cmd = Command::new("pylint");  // TODO maybe, python3 -m pylint?
+    cmd.arg("-E")
+       .args(targets);
+    // TODO shit. how to get proper command line
+    info!("\t{:?}", cmd);
+    let res = try!(
+        cmd
         .output()
         .map_err(|e| format!("error while executing pylint {:?}", e)));
     if !res.status.success() {
@@ -277,7 +282,7 @@ python_files = '*.py'
        .arg(file.path())
        .arg("--ignore-glob").arg("setup.py")
        .arg(path);
-    debug!("{:?}", cmd);
+    debug!("\t{:?}", cmd);
     let res = try!(
         cmd
         .output()
@@ -297,13 +302,15 @@ python_files = '*.py'
 fn check_shellcheck(path: &Path) -> RuciResult<()> {
     let targets = get_sh_targets(path);
     // TODO hmm, need to exlude .git directory?
-    info!("\tshellcheck: {:?}: {:?}", path, targets);
     if targets.is_empty() {
+        info!("\tshellcheck: nothing to check");
         return Ok(());
     }
 
-    let res = try!(Command::new("shellcheck")
-                   .args(targets)
+    let mut cmd = Command::new("shellcheck");
+    cmd.args(targets);
+    info!("\t{:?}", cmd);
+    let res = try!(cmd
                    .output()
                    .map_err(|e| format!("error while executing shellecheck {:?}", e)));
     if !res.status.success() {
