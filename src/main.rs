@@ -18,6 +18,7 @@ use std::process::{Command, exit};
 use std::fs;
 use std::io::prelude::*;
 use std::thread;
+use std::ffi::OsStr;
 use tempfile::NamedTempFile;
 
 use clap::{Arg, App};
@@ -108,7 +109,7 @@ fn is_ruci_target(path: &Path) -> RuciResult<Rspec> {
             return Ok(Rspec::Skip);
         }
     }
-    if path.file_stem().map_or(false, |e| e  == ".eggs") {
+    if path.file_stem().map_or(false, |e| [OsStr::new(".eggs"), OsStr::new(".tox")].contains(&e)) {
         return Ok(Rspec::Skip);
     }
     if path.join(".noruci").exists() {
@@ -188,10 +189,10 @@ fn is_sh_file(path: &Path) -> RuciResult<bool> {
 }
 
 
-fn is_dotgit(entry: &DirEntry) -> bool {
+fn ignore_sh(entry: &DirEntry) -> bool {
     entry.file_name()
         .to_str()
-        .map(|s| s == ".git")
+        .map(|s| [".git", ".tox"].contains(&s))
         .unwrap_or(false)
 }
 
@@ -200,7 +201,7 @@ fn get_sh_targets(path: &Path) -> Vec<PathBuf> {
     // kinda overkilly way to skip .git dir..
     // https://github.com/BurntSushi/walkdir
     let walker = WalkDir::new(path).follow_links(true).into_iter();
-    return walker.filter_entry(|e| !is_dotgit(e)).filter_map(
+    return walker.filter_entry(|e| !ignore_sh(e)).filter_map(
         |me| me.ok().map(|e| e.path().to_owned()).filter(|p| is_sh_file(p).unwrap_or(false))
     ).collect();
 }
