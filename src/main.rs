@@ -224,6 +224,7 @@ fn check_mypy(path: &Path) -> RuciResult<()> {
     let mut cmd = Command::new("mypy");
     cmd.arg("--check-untyped-defs")
        .arg("--strict-optional")
+       .arg("--namespace-packages")
        // .arg("--scripts-are-modules")
        .args(targets);
     info!("\t{:?}", cmd);
